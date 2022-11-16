@@ -2,13 +2,17 @@ from sage.rings.finite_rings.integer_mod import square_root_mod_prime
 # BLS12_381 prime
 # q = 4002409555221667393417789825735904156556882819939007885332058136124031650490837864442687629129015664037894272559787
 # BLS12_Cheon prime
-q = 656356683693923479863117532358453498706487471262312031713236062035153349754850600248902117707113718656412873932748617
+# q = 656356683693923479863117532358453498706487471262312031713236062035153349754850600248902117707113718656412873932748617
+# Curve2 param:
+q = 5739212180072054691886037078074598258234828766015465682035977006377650233269727206694786492328072119776769214299497
 F = GF(q)
 K.<x> = PolynomialRing(F)
 # nrF for BLS12_381 extending Fq to Fq2 (Towering part1)
 # nrF = -1
 # nrF for BLS12_Cheon
-nrF = 29
+# nrF = 29
+# fr BLS12_Cheon Curve2
+nrF = 23
 F2.<u> = F.extension(x ^ 2 - nrF)
 # Checking that a. nrF is a non quadratic residue, b. F2 is a field
 nrF_sqrt = square_root_mod_prime(Mod(nrF,q))
@@ -23,7 +27,10 @@ K2.<y> = PolynomialRing(F2)
 # nrF2 for BLS12_381 for extending Fq2 to Fq2 (Towering part2)
 # nrF2 = u+1
 # nrF2 for BLS12_Cheon for extending Fq2 to Fq12
-nrF2 = 7*u
+# nrF2 = 7*u
+# for BLS12_Cheon, Curve2
+nrF2 = 1*u
+
 F12.<v> = F2.extension(y ^ 6 - nrF2)
 
 # Checks for a. nrF2 should be a nonresidue (no 6th root), b. F12 should be a field
