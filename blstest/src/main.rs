@@ -39,8 +39,8 @@ fn pow_sp<S: Field>(p: S, exp: u128) -> S
 // g_d_pair is a QuadExtField/Fp12 elem = e((a^d1)*g1_gen, (a^d2)*g2_gen) = e(g1_gen, g2_gen)^(a^(d1+d2))
 fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d_pair: TargetField) -> i64
 {
+    let attack_start = Instant::now();
     println!("IN cheon_attack, inputs: {},{},{},{},{}", p, d, g_pair, g_1_pair, g_d_pair);
-    /*
     let p_1 = p - 1;
     let fr_one = Fr::one();
     let zeta = Fr::from(2); // Fr::generator(); No generator() function, but we know 2 is a generator of Fr as per src/fr.rs
@@ -50,44 +50,43 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
     // As per sage: m is a 26bit number
     let m = ( f64::sqrt( (p_1/(d as u128)) as f64 )).ceil() as u32;
     let m_hat =( ((p_1/(d as u128)) as f64)/(m as f64) ) .floor() as u32;
-    println!("In cheon_attack: p_1: {}, zeta: {}, zeta_hat: {}, m: {}, m_hat: {}", p_1, zeta, zeta_hat, m, m_hat);
 
     // lookup dictionary: 
     // keys are points in target group, a quadExtField element [can stringify it if needed]
-    let lookup1 = HashMap::new();
+    let mut lookup1 = HashMap::new();
     let zeta_hat_inv = fr_one.div(Fr::from(zeta_hat));
+    println!("In cheon_attack: p_1: {}, zeta: {}, zeta_hat: {}, m: {}, m_hat: {}, zeta_hat_inv: {}, time: {:?}", p_1, zeta, zeta_hat, m, m_hat, zeta_hat_inv, attack_start.elapsed());
+    
+    // Nov18: All correct till this point.
 
-    let mult = Fr::one();
+    let mut mult = Fr::one();
     for u in 0..m
     {
-        // TODO:1 convert mult to ?
-        // mult might be 80bits since mult in Fr, so we cant use pow(.,.)
-        // .pow requires mult to of class that implements AsRef<u64> 
-        let pointu = pow_sp(g_d_pair, mult as u128); // pow(g_d_pair, mult as usize); // QuadExtField: has add & mul
+        let pointu = pow_sp(g_d_pair, bigInt_to_u128(mult.into()) ); // pow(g_d_pair, mult as usize); // QuadExtField: has add & mul
         lookup1.insert(pointu, u);
         mult = mult.mul(zeta_hat_inv);
-        if u % 100 == 7
+        if u % 100 == 0
         {
-            println!("IN U Loop, u: {}, mult: {}, mult as usize: {}", u, mult, mult as usize);
+            println!("IN U Loop, u: {}, mult: {}, pointu: {}, time: {:?}", u, mult, pointu, attack_start.elapsed() );
         }
     }
 
-    let k_0 : u128 = p - 1;
-    let u_found : u32 = m+1;
-    let zeta_hat_m = pow(zeta_hat, m as usize);
-    let mult2 = Fr::one();
+    let mut k_0 : u128 = p - 1;
+    let mut u_found : u32 = m+1;
+    let zeta_hat_m = pow_sp(zeta_hat, m as u128);
+    let mut mult2 = Fr::one();
+    println!("Just before v-loop: k0: {}, ufound: {}, zeta_hat_m: {}", k_0, u_found, zeta_hat_m);
     for v in 0..m_hat
     {
-        // TODO:2 
-        let test = pow(g_pair, mult2 as usize);
+        let test = pow_sp(g_pair, bigInt_to_u128(mult2.into()) );
         match lookup1.get(&test)
         {
             Some(&val) => {
-                println!("YAYY!!! Key {} found in lookup1!! val: {}", test, val);
                 // u_found is < m
                 u_found = val;
                 // k_0 < (m + p_1/d) < p_1
                 k_0 = u_found as u128 + (m*v) as u128;
+                println!("YAYY!!! Key {} found in lookup1!! val: {}, k_0: {}, time: {:?}", test, val, k_0, attack_start.elapsed());
                 break;
             },
             _ => println!("Key {} not found in test :(", test),
@@ -104,59 +103,63 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
     let m_prime = ( f64::sqrt(d as f64).ceil() ) as u64;
     let m_prime_hat = ( (d as f64) / (m_prime as f64)).floor() as u64;
     // can use pow() here since p1/d is a 51bit number.
-    let zeta_upside_down_hat = pow(zeta, (p_1/(d as u128)) as usize );
+    let zeta_upside_down_hat = pow_sp(zeta, (p_1/(d as u128)) );
+    println!("JUST before uprime loop: mprime {}, mprime_hat {}, zeta_upside_down_hat {}, time: {:?}", m_prime, m_prime_hat, zeta_upside_down_hat, attack_start.elapsed());
 
-    let lookup2 = HashMap::new();
+    let mut lookup2 = HashMap::new();
     for u_prime in 0..m_prime
     {
-        // TODO: Need zeta inverse in Fr, raised to k0+uprime*p1/d.
-        // Exp: zeta.inverse()^k0 * zeta_upside_down_hat.inverse()^u_prime
-        // Exp can be 80-bit, so can't use pow().
-        let exp = zeta.inverse().pow(k_0)  ;
-        // let point = g_1_pair.pow();
-        let point = pow(g_1_pair, zeta_upside_down_hat.pow( -1*u_prime)/zeta.pow(k_0) );
+        let exp = pow_sp(Fr::from( fr_one.div(zeta)),k_0) * pow_sp( fr_one.div( zeta_upside_down_hat), u_prime as u128 ) ;
+        let point = pow_sp(g_1_pair, bigInt_to_u128(exp.into()) );
         lookup2.insert(point, u_prime);
+        if (u_prime % 100 == 0)
+        {
+            println!("IN u_prime loop, uprime: {}, exp: {}, point: {}, time: {:?}", u_prime, exp, point, attack_start.elapsed() );
+        }
     }
 
     // k_1 is < mprime + mprime*mprime_hat
     // i.e. < mprime + d < d+d.
-    let k_1 : u32 = 2*d;
+    let mut k_1 : u64 = 2*d as u64;
     // u_prime_found < m_prime, which is ~sqrt(d), so < d
-    let u_prime_found : u64 = d;
+    let mut u_prime_found : u64 = d as u64;
     for v_prime in 0..m_prime_hat
     {
-        let test = pow(g_pair, zeta_upside_down_hat.pow( m_prime*v_prime) );
+        let test = pow_sp(g_pair, bigInt_to_u128(pow_sp( zeta_upside_down_hat, (m_prime as u128)*(v_prime as u128) ).into() ));
         match lookup2.get(&test)
         {
             Some(&val) => {
-                println!("YAYYY Key {} found in lookup2, val: {}", test, val);
                 u_prime_found = val;
                 k_1 = u_prime_found + m_prime * v_prime;
+                println!("YAYYY Key {} found in lookup2, val: {}, k_1: {}, time: {:?}", test, val, k_1, attack_start.elapsed());
                 break;
             },
             _ => println!("Key {} not found in lookup2 :(", test),
         }
     }
 
-    if (k_0 == (p-1)) || (k_1 == 2*d)
+    if (k_0 == (p-1)) || (k_1 == 2*d as u64)
     {
-        println!("DAYUM, No k_0/k_1 FOUND!!!");
+        println!("DAYUM, No k_0/k_1 FOUND!!!, k0: {}, k1: {}, total time: {:?}", k_0, k_1, attack_start.elapsed());
         return -1;
     }
     else
     {
-        let alpha = k_0 + k_1*(p_1/(d as u128));
-        println!("FOUND alpha!! {}", zeta.pow( alpha ) );
-        return zeta.pow( alpha );
+        // k_0: u128, k_1: u64, p_1: u128, d: u32
+        let alpha_log = k_0 + (k_1 as u128)*(p_1/(d as u128));
+        let alpha = pow_sp(zeta, alpha_log );
+        println!("FOUND alpha!! {} log: {}, k0: {}, k1: {}, total time: {:?}", alpha, alpha_log, k_0, k_1, attack_start.elapsed());
+        return bigInt_to_u128(alpha.into()) as i64;
     }
-    */
-    return -1;
 }
 
 fn bigInt_to_u128(bi: BigInteger128) -> u128
 {
     let ans: u128 = (bi.0[0] as u128 + pow(2 as u128,64)*(bi.0[1] as u128) ) as u128;
-    println!("input: {}, u128: {}", bi, ans);
+    if ans % 100 == 7
+    {
+        println!("input: {}, u128: {}", bi, ans);
+    }
     return ans;
 }
 
