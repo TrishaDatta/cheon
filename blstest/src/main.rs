@@ -1,5 +1,6 @@
 use ark_ec::{Group, pairing::Pairing, CurveGroup};
 use ark_ff::{Field, One, MontFp};
+use ark_ff::biginteger::BigInteger128;
 use ark_bls12_cheon::Bls12Cheon;
 use  ark_bls12_cheon::{
      G1Projective as G1, G2Projective as G2, Fr as Fr, Fq, Fq2, Fq6, Fq12 as TargetField
@@ -15,17 +16,22 @@ use std::ops::Div;
 use std::collections::HashMap;
 use num_traits::pow;
 
-/*
-impl AsRef<[u64]> for u128
+fn pow_sp<S: Field>(p: S, exp: u128) -> S
 {
-    fn as_ref(&self) -> &[u64]
+    let mut res = S::one();
+    // iterate over all bits in exp, in Big endian order.
+    for b in 0..128
     {
-        // make an array of length 2
-        let ans: [u64; 2] = [ self % (pow(2 as u128,64) ) , self/(pow(2 as u128,64) ) ];
-        return ans;
+        res = res*(res);
+        let bi = exp & (1 << (127-b) ) > 0;
+        // println!("index: {}, next bit: {}, exp: {}", b, bi, exp);
+        if bi
+        {
+            res = res * p;
+        }
     }
+    return res;
 }
-*/
 
 // p is r (~80bit), d is a 30bit factor of r-1
 // g_pair is a QuadExtField elem = e(g1_gen, g2_gen)
@@ -33,12 +39,13 @@ impl AsRef<[u64]> for u128
 // g_d_pair is a QuadExtField/Fp12 elem = e((a^d1)*g1_gen, (a^d2)*g2_gen) = e(g1_gen, g2_gen)^(a^(d1+d2))
 fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d_pair: TargetField) -> i64
 {
+    println!("IN cheon_attack, inputs: {},{},{},{},{}", p, d, g_pair, g_1_pair, g_d_pair);
     /*
     let p_1 = p - 1;
     let fr_one = Fr::one();
     let zeta = Fr::from(2); // Fr::generator(); No generator() function, but we know 2 is a generator of Fr as per src/fr.rs
     // zeta^d can be done by pow() since d is ~30bits
-    let zeta_hat = pow(zeta, d as usize);
+    let zeta_hat = pow_sp(zeta, d as u128);
     // Since d is a factor of p_1, p_1/d is actually a 51-bit whole number.
     // As per sage: m is a 26bit number
     let m = ( f64::sqrt( (p_1/(d as u128)) as f64 )).ceil() as u32;
@@ -56,7 +63,7 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
         // TODO:1 convert mult to ?
         // mult might be 80bits since mult in Fr, so we cant use pow(.,.)
         // .pow requires mult to of class that implements AsRef<u64> 
-        let pointu = g_d_pair.pow((mult as u64)); // pow(g_d_pair, mult as usize); // QuadExtField: has add & mul
+        let pointu = pow_sp(g_d_pair, mult as u128); // pow(g_d_pair, mult as usize); // QuadExtField: has add & mul
         lookup1.insert(pointu, u);
         mult = mult.mul(zeta_hat_inv);
         if u % 100 == 7
@@ -146,19 +153,26 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
     return -1;
 }
 
+fn bigInt_to_u128(bi: BigInteger128) -> u128
+{
+    let ans: u128 = (bi.0[0] as u128 + pow(2 as u128,64)*(bi.0[1] as u128) ) as u128;
+    println!("input: {}, u128: {}", bi, ans);
+    return ans;
+}
+
 fn main() {
     println!("Hello, world!");
    
     // TESTING Fr:
-    let mut alpha  = Fr::from(73); // this is the secret
-    println!("alpha square_in_place: {}", alpha.square_in_place());
+    let alpha  = Fr::from(73); // this is the secret
+    println!("alpha: {}, alpha^1: {}, alpha^4: {}, alpja^19: {}", alpha, pow_sp(alpha,1 as u128), pow_sp(alpha, 4 as u128), pow_sp(alpha, 19 as u128) );
     let fr_11 = Fr::from(11);
     let fr_one = Fr::one();
     // let fq_11_mul_inv = Fq::from(4173972494597857957735299693145162369625330011647611405117074186456472896923437968505299267147688814383104883126907);
     let fr_11_m_inv = fr_one.div(fr_11); // .div(Fq::one());
     let fr_11_a_inv = Fr::from(-11);
     let fr_zero = Fr::zero();
-    println!("Mult Identity in Fr: {}, Element in Fr: {}, Its inverse : {}, minv 11: {} , Fr(-11): {} , Fr(11)+Fr(-11): {}, alpha: {}, alpha^1: {}, alpha*alpha: {}", fr_one, fr_11, fr_11_m_inv, fr_11_m_inv*fr_11, fr_11_a_inv, (fr_11 + fr_11_a_inv) == fr_zero, alpha, alpha.pow(&[1 as u64]), alpha*alpha );
+    println!("Mult Identity in Fr: {}, Element in Fr: {}, Its inverse : {}, minv 11: {} , Fr(-11): {} , Fr(11)+Fr(-11): {}, alpha: {}, alpha^1: {}, alpha*alpha: {}", fr_one, fr_11, fr_11_m_inv, fr_11_m_inv*fr_11, fr_11_a_inv, (fr_11 + fr_11_a_inv) == fr_zero, alpha, pow_sp(alpha,1), alpha*alpha );
 
     // Testing fq square_in_place, pow funcs:
     let mut alpha1 = Fq::from(73);
@@ -276,23 +290,22 @@ fn main() {
     let d : u32 = 702047372; // this is a 30bit factor of (r-1)
     let d1 = 11726539;
     let d2 = d - d1;
-    let alpha  = Fr::from(73); // this is the secret
+    let alpha  = Fr::from(973); // this is the secret
     
-    // TODO: 
-    let alpha_d = alpha.pow(&[0 as u64]);
-    println!("##### GENERATING Cheon Puzzle Inputs: r: {}, d: {}, d1: {}, d2: {}, alpha: {}, alpha_d: {}, one: {}, one.square_in_place(): {}", r, d, d1, d2, alpha, alpha_d, Fr::one(), Fr::one().square_in_place());
+    let alpha_d = pow_sp(alpha, d as u128);
+    let alp_bigint128 : BigInteger128 = alpha.into();
+    println!("##### GENERATING Cheon Puzzle Inputs: r: {}, d: {}, d1: {}, d2: {}, alpha: {}, alpha_d: {}, one: {}, alpha.0: {}, bigInt128: {}", r, d, d1, d2, alpha, alpha_d, Fr::one(), alpha.0, alp_bigint128.0[0] as u128);
 
-    /*
-    let alpha_d1 = alpha.pow( d1);
-    let alpha_d2 = alpha.pow( d2);
+    let alpha_d1 = pow_sp(alpha, d1 as u128);
+    let alpha_d2 = pow_sp(alpha, d2 as u128);
     let g1_alpha = g1_gen.mul(Fr::from(alpha)); // g*alpha or g^alpha, alpha_P1
     let g1_alpha_d1 = g1_gen.mul(Fr::from(alpha_d1));
     let g2_alpha_d2 = g2_gen.mul(Fr::from(alpha_d2));
     let g_pair = Bls12Cheon::pairing(g1_gen, g2_gen);
     let g_1_pair = Bls12Cheon::pairing(g1_alpha, g2_gen);
     let g_d_pair = Bls12Cheon::pairing(g1_alpha_d1, g2_alpha_d2);
+    println!("TESTING correctness (bilinearity) of pairings: {}, {}", g_1_pair.0 == pow_sp(g_pair.0, bigInt_to_u128(alpha.into()) ), g_d_pair.0 == pow_sp(g_pair.0, bigInt_to_u128(alpha_d.into()) ) );
     cheon_attack(r, d, g_pair.0, g_1_pair.0, g_d_pair.0 );
-    */
 
     /*
     let mut g1_sum = G1::zero();
