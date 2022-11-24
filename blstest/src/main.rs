@@ -240,7 +240,7 @@ fn cheon_attack(p: u128, d: u32, zeta: Fr, g_pair: TargetField, g_1_pair: Target
     let mut mult2 = Fr::one();
     println!("Just before v-loop: k0: {}, ufound: {}, zeta_hat_msb: {}, zeta_hat_m_small: {}", k_0, u_found, zeta_hat_msb, zeta_hat_m_small);
     
-    let lookup_v_new = pow_sp2(g_pair_msb, zeta_hat_m_small, m_small_hat as u64, 80 as u32, 16 as u32);
+    let lookup_v_new = pow_sp2(g_pair_msb, zeta_hat_m_small, (m_small_hat + 1) as u64, 80 as u32, 16 as u32);
     
     // for v in 0..m_small_hat
     for (gp_v, v) in &lookup_v_new
@@ -275,10 +275,12 @@ fn cheon_attack(p: u128, d: u32, zeta: Fr, g_pair: TargetField, g_1_pair: Target
     let zeta_upside_down_hat = pow_sp(zeta, (p_1/(d as u128)), 64 );
     let zeta_upside_down_hat_inv = fr_one.div( zeta_upside_down_hat);
     println!("JUST before uprime loop: mprime {}, mprime_hat {}, zeta_upside_down_hat {}, time: {:?}", m_prime, m_prime_hat, zeta_upside_down_hat, attack_start.elapsed());
+    // this is zeta^ -k0
     let zeta_inv_k0 = pow_sp(Fr::from( fr_one.div(zeta)),k_0, 52);
+    // this is g1^(zeta^ -k0)
     let g1_pair_zeta_k0_inv = pow_sp(g_1_pair, bigInt_to_u128(zeta_inv_k0.into()), 81 );
-
-    let mut lookup2_new = pow_sp2(g_1_pair, zeta_upside_down_hat_inv, m_prime, 80 as u32, 16 as u32);
+    // raise g1_pair_zeta_k0_inv to 
+    let mut lookup2_new = pow_sp2(g1_pair_zeta_k0_inv, zeta_upside_down_hat_inv, m_prime, 80 as u32, 16 as u32);
 
     /*
     let mut lookup2 = HashMap::new();
@@ -301,10 +303,9 @@ fn cheon_attack(p: u128, d: u32, zeta: Fr, g_pair: TargetField, g_1_pair: Target
     let mut k_1 : u64 = 2*d as u64;
     // u_prime_found < m_prime, which is ~sqrt(d), so < d
     let mut u_prime_found : u64 = d as u64;
-    
     let zeta_upside_down_hat_m_prime = pow_sp(zeta_upside_down_hat, m_prime as u128, 32);
-    
-    let lookup2_v_new = pow_sp2(g_pair, zeta_upside_down_hat_m_prime, m_prime_hat, 80 as u32, 16 as u32);
+    // v_prime varies from [0,m_prime_hat]
+    let lookup2_v_new = pow_sp2(g_pair, zeta_upside_down_hat_m_prime, m_prime_hat + 1, 80 as u32, 16 as u32);
 
     let mut mult2_prime = Fr::one();
 
