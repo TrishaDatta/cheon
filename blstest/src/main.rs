@@ -15,6 +15,7 @@ use std::ops::Div;
 
 use std::collections::HashMap;
 use num_traits::pow;
+use rand::Rng;
 
 // bitlen: bit length of exp, cant be more than 126 
 fn pow_sp<S: Field>(p: S, exp: u128, bitlen: u32) -> S
@@ -36,16 +37,16 @@ fn pow_sp<S: Field>(p: S, exp: u128, bitlen: u32) -> S
 
 // returns p^exp, p^(exp^2), ...., p^(exp^(n))
 // assumes exp is 80bits:
-fn pow_sp2<S: Field>(p: S, exp: u128, n: u64, k: u32) -> Vec<S>
+fn pow_sp2<S: Field>(p: S, exp: Fr, n: u64, m: u32, k: u32) -> HashMap<S,u64>
 {
     let mut vec = Vec::with_capacity(n as usize);
+    let mut map = HashMap::new();
 
     // populate lookup table:
     // let k = ((n as f64).log2()) as u64;
     // 2^k sized array for 80/k buckets
-    let m : u32 = 81;
     let num_bkt : u32 = (m/k);
-    let p2k = pow(2,k as usize);
+    let p2k : u64 = pow(2,k as usize);
 
     println!("#####IN pow_sp2: kf: {} k: {}, m: {}, num_bkt: {}, p2k: {}", (n as f64).log2(), k, m, num_bkt, p2k);
 
@@ -64,7 +65,7 @@ fn pow_sp2<S: Field>(p: S, exp: u128, n: u64, k: u32) -> Vec<S>
         }
         else
         {
-            bkt_i.push( pow_sp( lookup_table[(bi-1) as usize][1], p2k, k+1 as u32 ) ); // lookup_table[bi-1][1] ^ (2^k)
+            bkt_i.push( pow_sp( lookup_table[(bi-1) as usize][1], p2k as u128, k+1 as u32 ) ); // lookup_table[bi-1][1] ^ (2^k)
         }
         for j in 2..p2k
         {
@@ -80,36 +81,69 @@ fn pow_sp2<S: Field>(p: S, exp: u128, n: u64, k: u32) -> Vec<S>
     }
     println!("FILLED ALL BUCKETS in LookupTable!!! (len: {}) Time: {:?}", lookup_table.len(), pow_sp2_start.elapsed());
 
-    // for verification, uisng pow_sp to get powers:
-    let  mut pow_sp_ans:  Vec<S> = Vec::with_capacity( n as usize );
-    let pow_start = p2k - 5; // 2*p2k
-    let pow_end = p2k - 5 + n as u128; // 2*p2k + n
-    for pi in pow_start..pow_end
+    // JUST for testing, uisng pow_sp to get powers:
+    // using n random exponent values, 80bit:
+    /*
+    let mut rnd_pows: Vec<u128> = Vec::with_capacity(n as usize);
+    let mut rng = rand::thread_rng();
+    for i in 0..n
     {
-        pow_sp_ans.push(pow_sp(p, pi as u128, 81));
+        rnd_pows.push( rng.gen_range(0..(pow(2,m as usize)-1)) );
+    }
+    println!("rnd_pows: {:#?}", rnd_pows);
+    */
+    /*
+    let mut pow_sp_ans:  Vec<S> = Vec::with_capacity( n as usize );
+    for pi in rnd_pows.iter()
+    {
+        pow_sp_ans.push(pow_sp(p, *pi as u128, m));
+        // println!("{}", *pi);
     }
     println!("FINIshed running pow_sp() for powers from {} to {}, time since start: {:?}", pow_start, pow_end,  pow_sp2_start.elapsed());
+    */
 
-    for pi in pow_start..pow_end
+    // raising 
+    let mut pows_fr: Vec<Fr> = Vec::with_capacity(n as usize);
+    let mut pows: Vec<u128> = Vec::with_capacity(n as usize);
+    pows_fr.push( Fr::from(1) ); // exp^0
+    pows.push(1);
+    for i in 1..n
+    {
+        pows_fr.push( pows_fr[(i-1) as usize]*exp );
+        pows.push( bigInt_to_u128(pows_fr[i as usize].into()) );
+        if i % 1000 == 7
+        {
+            println!("exp: {}, exp^i: {} {}", exp, pows_fr[i as usize], pows[i as usize]);
+        }
+    }
+
+    let mut count = 0;
+    // [For testing] for pi in rnd_pows.iter() // pow_start..pow_end
+    for pi in pows.iter()
     {
         let mut gpi = S::one();
         for bi in 0..num_bkt
         {
             // ind = pi & ( (p2k-1) << (27*bi) )
-            let ind = pi as u128 & ( (p2k - 1) << (27*bi) );
+            // let ind = (pi as u128 & ( (p2k - 1) << (k*bi) ));
+            let ind = ((*pi) >> (k*bi) ) & (p2k as u128 - 1);
+            // println!("Raising g to power {}, in bkt {}, ind: {}", pi, bi, ind);
             // get lookup[bi][ind]
             gpi = gpi * lookup_table[bi as usize][ind as usize];
-            println!("Raising g to power {}, in bkt {}, ind: {}", pi, bi, ind);
        
         }
 
-        if pi % 3 == 1
+        if count % 2000 == 1
         {
-            println!("DONE with {} exponentiations!!! (g^0...g^({}) ), Time: {:?}", pi, pi, pow_sp2_start.elapsed());
+            println!("DONE with {} exponentiations!!! (g^(exp^0)...g^(exp^{}) ), current pow: {}, Time: {:?}", count, count, pi, pow_sp2_start.elapsed());
         }
         vec.push(gpi);
+        map.insert(gpi, count);
+        count = count + 1;
     }
-    println!("FINISHED all exponents!!! from {} to {}, time since statr: {:?}", pow_start, pow_end,  pow_sp2_start.elapsed());
+    println!("FINISHED all exponents!!! from exp^{} to exp^{}, time since statr: {:?}", 0, n-1,  pow_sp2_start.elapsed());
+    
+    /*
     for pi in 0..n
     {
         if vec[pi as usize] != pow_sp_ans[pi as usize]
@@ -117,7 +151,8 @@ fn pow_sp2<S: Field>(p: S, exp: u128, n: u64, k: u32) -> Vec<S>
             println!("DAYUM, Answers for {} DONT MATCH b/w pow_sp and pow_sp2!!", pi);
         }
     }
-    return vec;
+    */
+    return map; // vec
 }
 
 fn average(numbers: &[Duration]) -> f64 {
@@ -128,14 +163,16 @@ fn average(numbers: &[Duration]) -> f64 {
 // g_pair is a QuadExtField elem = e(g1_gen, g2_gen)
 // g_1_pair is a QuadExtField elem = e(a*g1_gen, g2_gen) = e(g1_gen, g2_gen)^a
 // g_d_pair is a QuadExtField/Fp12 elem = e((a^d1)*g1_gen, (a^d2)*g2_gen) = e(g1_gen, g2_gen)^(a^(d1+d2))
-fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d_pair: TargetField) -> i64
+// k0_msb: MSBits of k0. Can provide upto top 32bits.
+// k0_msb_len: bit length of k0_msb
+fn cheon_attack(p: u128, d: u32, zeta: Fr, g_pair: TargetField, g_1_pair: TargetField, g_d_pair: TargetField, k0_msb: u32, k0_msb_len: u16) -> i64
 {
     let attack_start = Instant::now();
-    println!("IN cheon_attack, inputs: {},{},{},{},{}", p, d, g_pair, g_1_pair, g_d_pair);
+    println!("IN cheon_attack, inputs: {},{}, zeta: {},{},{},{}, k0_msb: {}, msb_len: {}", p, d, zeta, g_pair, g_1_pair, g_d_pair, k0_msb, k0_msb_len);
     let p_1 = p - 1;
     let fr_one = Fr::one();
     // generator of Fr for bls12_cheon:
-    let zeta = Fr::from(2); // Fr::generator(); No generator() function, but we know 2 is a generator of Fr as per src/fr.rs
+    // let zeta = Fr::from(2); // Fr::generator(); No generator() function, but we know 2 is a generator of Fr as per src/fr.rs
     // zeta^d can be done by pow() since d is ~30bits
     let zeta_hat = pow_sp(zeta, d as u128, 32);
     // Since d is a factor of p_1, p_1/d is actually a 51-bit whole number.
@@ -143,11 +180,16 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
     let m = ( f64::sqrt( (p_1/(d as u128)) as f64 )).ceil() as u32;
     let m_hat =( ((p_1/(d as u128)) as f64)/(m as f64) ) .floor() as u32;
 
+    // should be 31 for k0_msb_len=20, 41 for k0_msb_len=10.
+    let k_small_len = ((p_1/(d as u128)) as f64).log2() as u32 + 1 - k0_msb_len as u32;
+    let p2_ksmall_len : u64 =  pow(2, k_small_len as usize);
+    let m_small = f64::sqrt( p2_ksmall_len as f64 ).ceil() as u32;
+    let m_small_hat = ((p2_ksmall_len as f64)/(m_small as f64)).floor() as u32;
+
     // lookup dictionary: 
     // keys are points in target group, a quadExtField element [can stringify it if needed]
-    let mut lookup1 = HashMap::new();
     let zeta_hat_inv = fr_one.div(Fr::from(zeta_hat));
-    println!("In cheon_attack: p_1: {}, zeta: {}, zeta_hat: {}, m: {}, m_hat: {}, zeta_hat_inv: {}, time: {:?}", p_1, zeta, zeta_hat, m, m_hat, zeta_hat_inv, attack_start.elapsed());
+    println!("In cheon_attack: p_1: {}, zeta: {}, zeta_hat: {}, m: {}, m_hat: {}, zeta_hat_inv: {}, k_small_len: {}, p2_ksmall_len: {}, m_small: {}, m_small_hat: {}, time: {:?}", p_1, zeta, zeta_hat, m, m_hat, zeta_hat_inv, k_small_len, p2_ksmall_len, m_small, m_small_hat, attack_start.elapsed());
     
     // Nov18: All correct till this point.
 
@@ -159,9 +201,16 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
     // choosing k=27, this is closest number to log2(m) which is also divisible by 81bit = len of
     // elems in Fr
     // testing with powers 0...9 :
-    let gd_powers = pow_sp2(g_d_pair, bigInt_to_u128(zeta_hat_inv.into()), 100 as u64, 27 as u32 );
+    // for m=81,k=27: table doesn't fit in memory, and each bucket took 9-14hrs to fill 
+    // let gd_powers = pow_sp2(g_d_pair, bigInt_to_u128(zeta_hat_inv.into()), 100 as u64, 81 as u32, 27 as u32 );
+    // let gd_powers = pow_sp2(g_d_pair, bigInt_to_u128(zeta_hat_inv.into()), 100 as u64, 80 as u32, 20 as u32 );
+    // This gives us gdpair^ { zhi^0...zhi^(msmall-1) } as a vector.
+    let lookup1_new = pow_sp2(g_d_pair, zeta_hat_inv, m_small as u64, 80 as u32, 16 as u32 );
 
-    for u in 0..m
+    // this is the old loop that uses the slower exponent function (pow_sp)
+    /*
+    let mut lookup1 = HashMap::new();
+    for u in 0..m_small
     {
         let start = Instant::now();
         let pointu = pow_sp(g_d_pair, bigInt_to_u128(mult.into()), 81 ); // pow(g_d_pair, mult as usize); // QuadExtField: has add & mul
@@ -178,28 +227,40 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
            println!("IN U Loop, u: {}, timing arr's avg: Power: {}, Insert: {}, Mult: {}", u, average(&timing_pow_arr), average(&timing_ins_arr), average(&timing_mul_arr)); 
         }
     }
+    */
+
+    // this power is ~k0, ~51bits
+    let zeta_hat_msb = pow_sp(zeta_hat, k0_msb as u128*(p2_ksmall_len as u128), 64 );
+    // this power is in Fr, upto 80bits.
+    let g_pair_msb = pow_sp(g_pair, bigInt_to_u128(zeta_hat_msb.into()), 81 );
 
     let mut k_0 : u128 = p - 1;
-    let mut u_found : u32 = m+1;
-    let zeta_hat_m = pow_sp(zeta_hat, m as u128, 32);
+    let mut u_found : u64 = m as u64 +1;
+    let zeta_hat_m_small = pow_sp(zeta_hat, m_small as u128, 32);
     let mut mult2 = Fr::one();
-    println!("Just before v-loop: k0: {}, ufound: {}, zeta_hat_m: {}", k_0, u_found, zeta_hat_m);
-    for v in 0..m_hat
+    println!("Just before v-loop: k0: {}, ufound: {}, zeta_hat_msb: {}, zeta_hat_m_small: {}", k_0, u_found, zeta_hat_msb, zeta_hat_m_small);
+    
+    let lookup_v_new = pow_sp2(g_pair_msb, zeta_hat_m_small, m_small_hat as u64, 80 as u32, 16 as u32);
+    
+    // for v in 0..m_small_hat
+    for (gp_v, v) in &lookup_v_new
     {
-        let test = pow_sp(g_pair, bigInt_to_u128(mult2.into()), 81 );
-        match lookup1.get(&test)
+        // using pow_sp2: gp_v is g_pair_msb^{zeta_hat_m_small^v}.
+        // let test = pow_sp(g_pair_msb, bigInt_to_u128(mult2.into()), 81 );
+        match lookup1_new.get(&gp_v)
         {
             Some(&val) => {
-                // u_found is < m
+                // u_found is < m_small
                 u_found = val;
-                // k_0 < (m + p_1/d) < p_1
-                k_0 = u_found as u128 + (m*v) as u128;
-                println!("YAYY!!! Key {} found in lookup1!! val: {}, k_0: {}, time: {:?}", test, val, k_0, attack_start.elapsed());
+                // k_0 < (p_1/d) < p_1
+                // k0 = msb_part + k0'
+                k_0 = (k0_msb as u128)*p2_ksmall_len as u128 + u_found as u128 + (m_small as u64 * v) as u128;
+                println!("YAYY!!! Key {} found in lookup1!! val (ufound): {}, v: {}, k_0: {}, time: {:?}", gp_v, val, v, k_0, attack_start.elapsed());
                 break;
             },
-            _ => println!("Key {} not found in test :(", test),
+            _ => {}, //println!("Key {} not found in test :(", gp_v),
         }
-        mult2 = mult2.mul(Fr::from(zeta_hat_m));
+        // mult2 = mult2.mul(Fr::from(zeta_hat_m_small));
     }
 
     if k_0 == (p-1)
@@ -212,38 +273,57 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
     let m_prime_hat = ( (d as f64) / (m_prime as f64)).floor() as u64;
     // can use pow() here since p1/d is a 51bit number.
     let zeta_upside_down_hat = pow_sp(zeta, (p_1/(d as u128)), 64 );
+    let zeta_upside_down_hat_inv = fr_one.div( zeta_upside_down_hat);
     println!("JUST before uprime loop: mprime {}, mprime_hat {}, zeta_upside_down_hat {}, time: {:?}", m_prime, m_prime_hat, zeta_upside_down_hat, attack_start.elapsed());
+    let zeta_inv_k0 = pow_sp(Fr::from( fr_one.div(zeta)),k_0, 52);
+    let g1_pair_zeta_k0_inv = pow_sp(g_1_pair, bigInt_to_u128(zeta_inv_k0.into()), 81 );
 
+    let mut lookup2_new = pow_sp2(g_1_pair, zeta_upside_down_hat_inv, m_prime, 80 as u32, 16 as u32);
+
+    /*
     let mut lookup2 = HashMap::new();
+    let mut mult_prime = Fr::one();
     for u_prime in 0..m_prime
     {
-        let exp = pow_sp(Fr::from( fr_one.div(zeta)),k_0, 81) * pow_sp( fr_one.div( zeta_upside_down_hat), u_prime as u128, 64 ) ;
-        let point = pow_sp(g_1_pair, bigInt_to_u128(exp.into()), 81 );
+        // let exp = pow_sp( fr_one.div( zeta_upside_down_hat), u_prime as u128, 64 ) ;
+        let point = pow_sp(g_1_pair, bigInt_to_u128(mult_prime.into()), 81 );
         lookup2.insert(point, u_prime);
+        mult_prime = mult_prime * zeta_upside_down_hat_inv;
         if (u_prime % 100 == 0)
         {
-            println!("IN u_prime loop, uprime: {}, exp: {}, point: {}, time: {:?}", u_prime, exp, point, attack_start.elapsed() );
+            println!("IN u_prime loop, uprime: {}, exp(mult_prime) : {}, point: {}, time: {:?}", u_prime, mult_prime, point, attack_start.elapsed() );
         }
     }
+    */
 
     // k_1 is < mprime + mprime*mprime_hat
     // i.e. < mprime + d < d+d.
     let mut k_1 : u64 = 2*d as u64;
     // u_prime_found < m_prime, which is ~sqrt(d), so < d
     let mut u_prime_found : u64 = d as u64;
-    for v_prime in 0..m_prime_hat
+    
+    let zeta_upside_down_hat_m_prime = pow_sp(zeta_upside_down_hat, m_prime as u128, 32);
+    
+    let lookup2_v_new = pow_sp2(g_pair, zeta_upside_down_hat_m_prime, m_prime_hat, 80 as u32, 16 as u32);
+
+    let mut mult2_prime = Fr::one();
+
+    // for v_prime in 0..m_prime_hat
+    for (test, v_prime) in &lookup2_v_new
     {
-        let test = pow_sp(g_pair, bigInt_to_u128(pow_sp( zeta_upside_down_hat, (m_prime as u128)*(v_prime as u128) , 128 ).into()), 81 );
-        match lookup2.get(&test)
+        // let test = pow_sp(g_pair, bigInt_to_u128(pow_sp( zeta_upside_down_hat, (m_prime as u128)*(v_prime as u128) , 128 ).into()), 81 );
+        // let test = pow_sp(g_pair, bigInt_to_u128(mult2_prime.into()), 80 );
+        match lookup2_new.get(&test)
         {
             Some(&val) => {
                 u_prime_found = val;
                 k_1 = u_prime_found + m_prime * v_prime;
-                println!("YAYYY Key {} found in lookup2, val: {}, k_1: {}, time: {:?}", test, val, k_1, attack_start.elapsed());
+                println!("YAYYY Key {} found in lookup2, val: {}, v_prime: {}, k_1: {}, time: {:?}", test, val, v_prime, k_1, attack_start.elapsed());
                 break;
             },
-            _ => println!("Key {} not found in lookup2 :(", test),
+            _ => {}, // println!("Key {} not found in lookup2 :(", test),
         }
+        // mult2_prime = mult2_prime * zeta_upside_down_hat_m_prime;
     }
 
     if (k_0 == (p-1)) || (k_1 == 2*d as u64)
@@ -264,7 +344,7 @@ fn cheon_attack(p: u128, d: u32, g_pair: TargetField, g_1_pair: TargetField, g_d
 fn bigInt_to_u128(bi: BigInteger128) -> u128
 {
     let ans: u128 = (bi.0[0] as u128 + pow(2 as u128,64)*(bi.0[1] as u128) ) as u128;
-    if ans % 100 == 7
+    if ans % 2000 == 7
     {
         println!("input: {}, u128: {}", bi, ans);
     }
@@ -419,11 +499,18 @@ fn main() {
     let d : u32 = 702047372; // this is a 30bit factor of (r-1)
     let d1 = 11726539;
     let d2 = d - d1;
-    let alpha  = Fr::from(973); // this is the secret
+    // Sample k0, k1 randomly, and set alpha to zeta^(k0 + k1*(p-1)/d )
+    
+    let mut rng = rand::thread_rng();
+    let k0_bitlen = 51; // hard coding for bls12_cheon, curve2, p-1/d is 51bits
+    let k0_secret : u128 = rng.gen_range(0..( (r-1)/d as u128 ));
+    let k1_secret : u32 = rng.gen_range(0..d);
+    let zeta = Fr::from(2);
+    let alpha  = pow_sp(zeta, k0_secret + (k1_secret as u128)*((r-1)/d as u128), 80 ); // this is the secret
     
     let alpha_d = pow_sp(alpha, d as u128, 32);
     let alp_bigint128 : BigInteger128 = alpha.into();
-    println!("##### GENERATING Cheon Puzzle Inputs: r: {}, d: {}, d1: {}, d2: {}, alpha: {}, alpha_d: {}, one: {}, alpha.0: {}, bigInt128: {}", r, d, d1, d2, alpha, alpha_d, Fr::one(), alpha.0, alp_bigint128.0[0] as u128);
+    println!("##### GENERATING Cheon Puzzle Inputs: r: {}, d: {}, d1: {}, d2: {}, zeta: {}, k0_secret: {}, k1_secret: {}, alpha: {}, alpha_d: {}, one: {}, alpha.0: {}, bigInt128: {}, bigInt_to_u128(alpha): {}", r, d, d1, d2, zeta, k0_secret, k1_secret, alpha, alpha_d, Fr::one(), alpha.0, alp_bigint128.0[0] as u128, bigInt_to_u128(alpha.into()));
 
     let alpha_d1 = pow_sp(alpha, d1 as u128, 32);
     let alpha_d2 = pow_sp(alpha, d2 as u128, 32);
@@ -464,6 +551,9 @@ fn main() {
     }
     println!("JUST DID {} Fr->u128 conversions, Time taken: {:?}", num_ops, tstart1.elapsed());
 
-    cheon_attack(r, d, g_pair.0, g_1_pair.0, g_d_pair.0 );
+    let num_bits_reveal = 20;
+    let k0_msb : u32 = (k0_secret >> (k0_bitlen - num_bits_reveal)) as u32;
+    println!("CHeon attack, revealing top {} bits to puzzlers, k0_msb: {}", num_bits_reveal, k0_msb);
+    cheon_attack(r, d, zeta, g_pair.0, g_1_pair.0, g_d_pair.0, k0_msb, num_bits_reveal );
 
     }
